@@ -185,25 +185,27 @@ public final class JanelaPrincipal extends JFrame {
     }
 
     private JPanel abaSimulacao() {
-        JPanel p = new JPanel(new GridBagLayout());
-        p.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
-        GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 4, 4, 4);
-        g.anchor = GridBagConstraints.WEST;
+        JPanel p = new JPanel(new BorderLayout(6, 6));
+        p.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
+        JPanel topo = new JPanel(new FlowLayout(FlowLayout.LEFT));
         JTextField u = new JTextField("20", 6);
         JTextField ops = new JTextField("200", 6);
-
-        g.gridx = 0; g.gridy = 0; p.add(new JLabel("Usuários simultâneos:"), g);
-        g.gridx = 1; p.add(u, g);
-        g.gridx = 0; g.gridy = 1; p.add(new JLabel("Operações por usuário:"), g);
-        g.gridx = 1; p.add(ops, g);
-
+        topo.add(new JLabel("Usuários simultâneos:"));
+        topo.add(u);
+        topo.add(new JLabel("Operações por usuário:"));
+        topo.add(ops);
         JButton b = new JButton("Executar simulação (isolada)");
-        JTextArea saida = new JTextArea(20, 70);
+        topo.add(b);
+        p.add(topo, BorderLayout.NORTH);
+
+        JTextArea saida = new JTextArea(35, 90);
         saida.setEditable(false);
         saida.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-
+        saida.setLineWrap(false);
+        JScrollPane scroll = new JScrollPane(saida);
+        p.add(scroll, BorderLayout.CENTER);
+        
         b.addActionListener(e -> {
             if (!simulando.compareAndSet(false, true)) return;
             b.setEnabled(false);
@@ -236,8 +238,6 @@ public final class JanelaPrincipal extends JFrame {
             }, "simulador-gui").start();
         });
 
-        g.gridx = 0; g.gridy = 2; g.gridwidth = 2; p.add(b, g);
-        g.gridy = 3; p.add(new JScrollPane(saida), g);
         return p;
     }
 

@@ -9,7 +9,6 @@ import java.io.PrintStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import ingressos.servico.Repositorio;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -28,7 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
+import java.util.Collection;
 
 
 /**
@@ -71,14 +70,13 @@ public final class Simulador {
         long buscas, listagens, compras, ingComprados, semEstoque, cancelamentos, ingCancelados, eventosCriados;
     }
 
-    //overload
     public Resultado executar(Repositorio service, int usuarios, int ops, long seed) throws Exception {
-    return executar(service, usuarios, ops, Math.max(50, usuarios * ops / 10), seed);
+        return executar(service, usuarios, Math.max(50, usuarios * ops / 10), ops, seed);
     }
-    
+
     public Resultado executar(Repositorio service, int usuarios, int capacidade, int opsPorUsuario, long seed) throws Exception {
         List<Long> ids = new CopyOnWriteArrayList<>();
-        capacidade = Math.max(50, usuarios * opsPorUsuario / 10);
+        // REMOVIDO: capacidade = Math.max(50, usuarios * opsPorUsuario / 10);  (usa o parâmetro)
         for (int i = 1; i <= 5; i++) {
             ids.add(service.adicionarEvento("Evento Simulado " + i, "Arena " + i,
                     BigDecimal.valueOf(50L * i), capacidade).id());
@@ -95,7 +93,7 @@ public final class Simulador {
             try {
                 while (rodando.get()) {
                     List<EventoDados> foto = service.exportar();
-                    conferir(foto, "foto #" + salvamentos.get(), violacoes);
+                    conferir(foto, ids, "foto #" + salvamentos.get(), violacoes);
                     armazenamento.salvar(foto);
                     salvamentos.incrementAndGet();
                     Thread.sleep(10);
@@ -161,8 +159,8 @@ public final class Simulador {
 
             // ---- conferência final
             List<EventoDados> finalFoto = service.exportar();
-            conferir(finalFoto, "estado final", violacoes);
-            long vendidos = finalFoto.stream().mapToLong(EventoDados::vendidos).sum();
+            conferir(finalFoto, ids, "estado final", violacoes);   
+            long vendidos = finalFoto.stream().filter(e -> ids.contains(e.id())).mapToLong(EventoDados::vendidos).sum();
             long esperado = total.ingComprados - total.ingCancelados;
             if (vendidos != esperado) {
                 violacoes.add("Conservação violada: vendidos=" + vendidos + " mas comprados-cancelados=" + esperado);
@@ -170,8 +168,12 @@ public final class Simulador {
 
             armazenamento.salvar(finalFoto);
             List<EventoDados> relido = armazenamento.carregar();
-            long vendidosRelido = relido.stream().mapToLong(EventoDados::vendidos).sum();
-            if (relido.size() != finalFoto.size() || vendidosRelido != vendidos) {
+            long vendidosRelido = relido.stream()
+                    .filter(e -> ids.contains(e.id()))                 
+                    .mapToLong(EventoDados::vendidos)
+                    .sum();
+            long eventosRelido = relido.stream().filter(e -> ids.contains(e.id())).count();
+            if (eventosRelido != ids.size() || vendidosRelido != vendidos) {   
                 violacoes.add("Arquivo salvo não bate com o estado em memória (" + vendidosRelido + " x " + vendidos + ").");
             }
 
@@ -213,9 +215,10 @@ public final class Simulador {
                 min, max);
     }
 
-    private static void conferir(List<EventoDados> foto, String rotulo, Queue<String> violacoes) {
+    private static void conferir(List<EventoDados> foto, Collection<Long> idsSimulacao, String rotulo, Queue<String> violacoes) {
         Set<Long> idsVenda = new HashSet<>();
         for (EventoDados d : foto) {
+            if (!idsSimulacao.contains(d.id())) continue;   // <-- ignora eventos antigos
             if (d.vendidos() < 0 || d.vendidos() > d.capacidade()) {
                 violacoes.add(rotulo + ": evento " + d.id() + " com vendidos=" + d.vendidos()
                         + " fora de [0," + d.capacidade() + "]");
