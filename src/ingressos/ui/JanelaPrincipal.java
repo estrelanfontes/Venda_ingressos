@@ -212,7 +212,7 @@ public final class JanelaPrincipal extends JFrame {
             int o = Integer.parseInt(ops.getText().trim());
             new Thread(() -> {
                 try {
-                    Simulador.Resultado r = new Simulador().executar(repositorio, n, o, System.nanoTime());
+                    Simulador.Resultado r = executarViaAtor(n, o);
 
                     var baos = new java.io.ByteArrayOutputStream();
                     var ps = new java.io.PrintStream(baos, true, java.nio.charset.StandardCharsets.UTF_8);
@@ -435,4 +435,22 @@ public final class JanelaPrincipal extends JFrame {
             };
         }
     }
+
+    private Simulador.Resultado executarViaAtor(int usuarios, int ops) throws Exception {
+    var system = akka.actor.typed.ActorSystem.create(
+        ingressos.simulacao.SimuladorActor.create(repositorio), "simulador-gui");
+    try {
+        var timeout = java.time.Duration.ofMinutes(5);
+        var fut = akka.actor.typed.javadsl.AskPattern.ask(
+            system,
+            (akka.actor.typed.ActorRef<Simulador.Resultado> replyTo) ->
+                new ingressos.simulacao.SimuladorActor.ExecutarSimulacao(
+                    usuarios, ops, Math.max(50, usuarios * ops / 10),
+                    System.nanoTime(), replyTo),
+            timeout, system.scheduler());
+        return fut.toCompletableFuture().join();
+    } finally {
+        system.terminate();
+    }
+}
 }

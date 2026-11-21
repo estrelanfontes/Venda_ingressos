@@ -20,6 +20,11 @@ import ingressos.servico.Repositorio;
 import ingressos.servico.RepositorioAkka;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.ArrayList;
+
+import akka.actor.typed.ActorRef;
+import akka.actor.typed.ActorSystem;
+import akka.actor.typed.javadsl.AskPattern;
 /**
  * Menu de console. Uso:
  * <pre>
@@ -42,9 +47,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         ArmazenamentoCsv csv = new ArmazenamentoCsv(Path.of("dados", "ingressos.csv"));
         boolean usarAkka = Arrays.asList(args).contains("--akka");
-        Repositorio repositorio = usarAkka
-                ? new RepositorioAkka(csv)
-                : new IngressoService(csv);
+        Repositorio repositorio = usarAkka ? new RepositorioAkka(csv) : new IngressoService(csv);
 
         if (args.length > 0 && args[0].equals("--gui")) {
             javax.swing.SwingUtilities.invokeLater(() ->
@@ -195,12 +198,20 @@ public final class Main {
     private void simular() throws Exception {
         int usuarios = Integer.parseInt(perguntar("Número de usuários simultâneos (N): "));
         int ops = Integer.parseInt(perguntar("Operações por usuário: "));
-        if (usuarios <= 0 || ops <= 0) {
-            throw new NegocioException("N e operações devem ser maiores que zero.");
-        }
-        System.out.println("Simulando (usa um catálogo isolado; seus dados não são alterados)...");
+        // usa o ator de orquestração
+        var system = akka.actor.typed.ActorSystem.create(
+            ingressos.simulacao.SimuladorActor.create(repositorio), "simulador");
+        var timeout = java.time.Duration.ofMinutes(5);
+        var fut = akka.actor.typed.javadsl.AskPattern.ask(
+            system,
+            (akka.actor.typed.ActorRef<Simulador.Resultado> replyTo) ->
+                new ingressos.simulacao.SimuladorActor.ExecutarSimulacao(
+                    usuarios, ops, Math.max(50, usuarios * ops / 10), System.nanoTime(), replyTo),
+            timeout, system.scheduler());
+        Simulador.Resultado r = fut.toCompletableFuture().join();
+        Simulador.imprimir(r, System.out);
+        system.terminate();
     }
-
     // ------------------------------------------------------------------ utilidades de UI
 
     private void imprimirTabela(List<EventoDados> eventos) {
@@ -226,5 +237,33 @@ public final class Main {
     private String perguntar(String mensagem) {
         System.out.print(mensagem);
         return in.nextLine();
+    }
+
+    public static void executarBenchmark(ArmazenamentoCsv csv, int usuarios, int ops, int repeticoes)throws Exception {
+    int capacidade = Math.max(50, usuarios * ops / 10); // fixa para os dois modos
+    List<Long> t1 = new ArrayList<>(), tn = new ArrayList<>();
+
+    for (int r = 0; r < repeticoes; r++) {
+        // T(1): Akka sequencial (1 usuário executando N*ops operações)
+        RepositorioAkka akka = new RepositorioAkka(csv);
+        Simulador.Resultado seq = new Simulador().executar(
+            akka, 1, usuarios * ops, capacidade, 42L);
+        akka.encerrar();
+        t1.add(seq.duracaoMs());
+
+        // T(N): locks paralelo (N usuários, ops cada)
+        IngressoService locks = new IngressoService(csv);
+        Simulador.Resultado par = new Simulador().executar(
+            locks, usuarios, ops, capacidade, 42L);
+        tn.add(par.duracaoMs());
+    }
+    // descarta warm-up (primeira repetição)
+    double m1 = media(t1.subList(1, t1.size()));
+    double mn = media(tn.subList(1, tn.size()));
+    System.out.printf("T(1)=%.1f ms  T(N)=%.1f ms  Speed-up=%.2fx%n", m1, mn, m1 / mn);
+    }
+
+    private static double media(List<Long> valores) {
+        return valores.stream().mapToLong(Long::longValue).average().orElse(0);
     }
 }
